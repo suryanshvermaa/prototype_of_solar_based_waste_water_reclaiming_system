@@ -1,157 +1,112 @@
-# Prototype Of Solar Based Waste Water Reclaiming System 
+# Solar Cascade — PI Control Dashboard
 
-Full Stack Iot Based Dashboard for Real-Time Monitoring and Control of a Solar-Based Waste Water Reclaiming System
+Full-stack IoT dashboard for the **major project: PI-based temperature–flow cascade control of a Fresnel solar collector prototype for wastewater reclamation** (NIT Patna, Electrical Engineering, 2026–2027). It extends the minor-project dashboard ("Prototype of Solar Based Waste Water Reclaiming System").
 
-![Dashboard Preview](./assets/DashboardDarkTheme.png)
----
-
-## 🏗️ Architecture & Tech Stack
-
-### Frontend (Client)
-- **Framework**: React.js (Vite)
-- **Routing**: React Router DOM (v6)
-- **Styling**: Tailwind CSS (with full Light/Dark mode token system)
-- **Charts**: Recharts
-- **State/Realtime**: Custom Hooks + `socket.io-client`
-- **Icons**: Lucide React
-
-### Backend (Server)
-- **Framework**: Node.js + Express
-- **Realtime**: Socket.IO
-- **Hardware Integration**: `serialport` for Arduino communication
-- **Mocking**: Built-in mock data generator for UI development without hardware
-
-### Hardware (Arduino)
-- **Sensors**: Flow rate sensor, DS18B20 Temperature sensors (Inlet/Outlet)
-- **Actuators**: Motor control (PWM)
-- **Libraries**: `OneWire`, `DallasTemperature`
+The Arduino runs two PI loops: an **outer loop** turns the outlet-temperature error into a flow setpoint `q*`, and an **inner loop** turns the flow error into the pump PWM. The dashboard shows both loops live, sends commands to the controller and records every sample.
 
 ---
 
-## ✨ Features
+## Features
 
-- **Real-Time Data**: Sub-second latency WebSocket updates for Flow Rate, Temperatures, and PWM.
-- **Dynamic Theming**: Seamless Light and Dark mode built on CSS variables and Tailwind.
-- **Historical Analytics**: 60-second rolling window history with beautiful, interactive charts.
-- **Smart Alerts**: Automatic severity-based alerts (e.g., Temperature Instability, Sensor Offline).
-- **Responsive Design**: Mobile-friendly layout with a collapsible sidebar and clean grid system.
-- **Dual Modes**: Run in `MOCK` mode for software development or `REAL` mode for actual hardware monitoring.
+- **Overview**: live cascade block diagram with signal values, controller state machine (INIT → FLOW_ONLY → CASCADE, FAULT, STOPPED), KPI tiles with sparklines, temperature and flow tracking charts.
+- **Controller commands**: set the outlet target `T*`, reset after a fault, stop the pump. These are sent to the Arduino over serial as `T35.0`, `R` and `S`.
+- **Control loops**: `T*` vs outlet, temperature error with tolerance band, `q*` vs measured flow, PWM requested vs applied (saturation), and both integrator states (anti-windup).
+- **Performance**: live MAE, RMS, IAE, peak error, time in band, flow-loop error, % PWM saturation, settling time and overshoot of the last setpoint step, error histogram.
+- **Events & faults**: decoded fault register (sensor, stale sample, over-temperature, no flow) and a filterable event log.
+- **Data log**: sample table, CSV export of the chart window, and download of the full run log that the server writes to `server/logs/`.
+- Light/dark theme, 1/5/15-minute chart windows, responsive layout.
+
+## Hardware (inputs and outputs)
+
+Only the minor-project components are used:
+
+| Role | Component | Arduino pin |
+|---|---|---|
+| Input | DS18B20 inlet temperature | D3 (1-Wire, 4.7 kΩ pull-up) |
+| Input | DS18B20 outlet temperature | D3 (same bus) |
+| Input | YF-S201 Hall-effect flow sensor | D2 (INT0) |
+| Output | L298N → 12 V DC pump | D5 (ENA, PWM), D8/D9 (IN1/IN2) |
+
+The firmware also supports an optional heat-isolation relay on D7, but it is **disabled by default** (`USE_HEAT_ISOLATION 0`), so no extra parts are needed.
+
+Firmware: `major_project_report/firmware/src/main.cpp` (PlatformIO) or `pi_cascade_controller/pi_cascade_controller.ino` (Arduino IDE). Libraries: OneWire, DallasTemperature.
 
 ---
 
-## 🚀 Getting Started
-
-### 1) Backend Setup (Node.js)
-
-The backend handles serial communication with the Arduino and broadcasts it via WebSockets.
+## Getting started (pnpm)
 
 ```bash
 cd server
-npm install
-cp .env.example .env
+pnpm install
+pnpm start
 ```
 
-**Configure `server/.env`**:
-You can run the server in two modes:
-
-*Option A: MOCK Mode (No Arduino required)*
-```env
-MODE=MOCK
-PORT=3001
-CORS_ORIGIN=http://localhost:5173
+```bash
+cd client
+pnpm install
+pnpm dev
 ```
 
-*Option B: REAL Mode (Connects to Arduino)*
+Open http://localhost:5173. Both folders contain a `pnpm-workspace.yaml` that allows the build scripts of `esbuild` (client) and `@serialport/bindings-cpp` (server).
+
+### Data source modes (`server/.env`)
+
+| Mode | What runs | How to start |
+|---|---|---|
+| `MOCK` (default) | JavaScript simulation of the cascade (same control logic, assumed plant) | `pnpm start` |
+| `FIRMWARE_SIM` | The **real firmware** compiled for the PC, running against simulated DS18B20 / YF-S201 / L298N + pump hardware | `pnpm start:fw-sim` |
+| `REAL` | Arduino over USB serial | `MODE=REAL` and `SERIAL_PORT=COM3` in `.env`, then `pnpm start` |
+
 ```env
 MODE=REAL
 PORT=3001
 CORS_ORIGIN=http://localhost:5173
-SERIAL_PORT=/dev/ttyACM0  # Linux: /dev/ttyACM0 or /dev/ttyUSB0. Windows: COM3
+SERIAL_PORT=COM3        # Linux: /dev/ttyACM0
 SERIAL_BAUD=9600
+# FIRMWARE_SIM_EXE=../../major_project_report/firmware/sim/plant_sim.exe
 ```
 
-**Start the Server:**
-```bash
-npm start
-```
+Close the Arduino IDE Serial Monitor before starting in `REAL` mode; it locks the port.
 
-### 2) Frontend Setup (React)
+### Telemetry protocol (1 Hz, newline-delimited JSON)
 
-```bash
-cd client
-npm install
-cp .env.example .env
-```
-
-**Configure `client/.env`**:
-Ensure it points to your backend.
-```env
-VITE_API_URL=http://localhost:3001
-```
-
-**Start the Dashboard:**
-```bash
-npm run dev
-```
-Open **http://localhost:5173** in your browser.
-
----
-
-## 🔌 Hardware Setup (Arduino)
-
-The Arduino sketch is located in `arduino/iot_dashboard/`.
-
-### Dependencies
-Install these in the Arduino IDE (Tools → Manage Libraries):
-- **OneWire**
-- **DallasTemperature**
-
-### Wiring Guide
-- **DS18B20 Temp Sensors** (Inlet & Outlet) share a single 1-Wire bus:
-  - DATA → **D4** (Requires a **4.7kΩ** pull-up resistor to 5V)
-  - VCC → **5V**
-  - GND → **GND**
-- **Motor/Flow Sensor**: Wiring depends on your specific PID controller/driver setup.
-
-### Data Protocol
-The Arduino sends data via Serial (9600 baud) every 1 second as a newline-delimited JSON string:
 ```json
-{"flowRate":2.45,"inletTemp":32.5,"outletTemp":45.2,"deltaTemp":12.7,"pwm":130}
+{"mode":"CASCADE","tSet":35.00,"inletTemp":30.00,"outletTemp":35.06,"deltaTemp":5.06,"eT":0.06,
+ "qSet":0.862,"flowRate":0.844,"eq":0.018,"pwm":101.2,"pwmRaw":101.2,"iT":-0.6551,"iQ":-1.15,
+ "sat":0,"ageMs":412,"fault":0,"rev":"PI-CASCADE-1.0"}
 ```
 
-*Note: When running the Node.js server in `REAL` mode, ensure the Arduino IDE Serial Monitor is CLOSED, or the server will fail to connect to the port.*
+Fault bits: 1 sensor, 2 stale sample, 4 over-temperature, 8 no flow. The minor-project format (`flowRate, inletTemp, outletTemp, deltaTemp, pwm`) is still accepted and shown as "Legacy P firmware".
+
+### Server API
+
+| Endpoint | Description |
+|---|---|
+| `GET /data` | latest sample |
+| `GET /history` | last 900 samples |
+| `GET /events` | controller events |
+| `GET /logs/current` | CSV of this server run |
+| `POST /command` | `{"cmd":"setpoint","value":35}`, `{"cmd":"reset"}`, `{"cmd":"stop"}`; in simulation also `sim:cloud`, `sim:clog`, `sim:inlet`, `sim:sensor` (`sim:dry` in FIRMWARE_SIM) |
+
+Socket.IO events: `sensorData` (every sample), `controllerEvent`.
 
 ---
 
-## 📁 Project Structure
+## Project structure
 
 ```
-minorProject/
-├── arduino/                 # Arduino C++ Sketch
-├── server/                  # Express + Socket.IO Backend
-│   ├── src/
-│   │   ├── index.js         # Main server entry
-│   │   ├── mockData.js      # Generator for MOCK mode
-│   │   ├── serialReader.js  # Arduino serial parser
-│   │   └── validate.js      # Data normalization
-│   └── package.json
-│
-└── client/                  # React Frontend
-    ├── src/
-    │   ├── components/      # UI, Charts, and Layout components
-    │   ├── hooks/           # Centralized state (useSensorData.js)
-    │   ├── pages/           # Route views (Dashboard, Analytics, etc.)
-    │   ├── services/        # API and Socket connections
-    │   ├── utils/           # Formatters and helpers
-    │   ├── App.jsx          # Router & Layout Shell
-    │   └── index.css        # Theme variables & Base styles
-    ├── tailwind.config.js   # Custom theme tokens
-    └── package.json
+server/src/
+  index.js              Express + Socket.IO, commands, history, events
+  mockData.js           MOCK: cascade simulation (same logic as the firmware)
+  serialReader.js       REAL: serial port reader/writer
+  processReader.js      FIRMWARE_SIM: runs plant_sim.exe like a serial port
+  start-firmware-sim.js pnpm start:fw-sim entry
+  validate.js           telemetry normalisation (cascade + legacy formats)
+  logger.js             CSV run log in server/logs/
+client/src/
+  App.jsx               routes, theme, chart window
+  hooks/useTelemetry.js socket + REST fallback, history, events
+  components/           Shell, LoopDiagram, ControlPanel, Kpi, LiveChart, ModeStepper, EventList, ui
+  pages/                Overview, Loops, Performance, Events, Data, Settings
+arduino/iot_dashboard/  minor-project sketch (legacy P controller)
 ```
-
----
-
-## 🛠️ Development & Customization
-
-- **Theming**: Colors and modes are controlled via CSS variables in `client/src/index.css`. Modify the RGB values there to instantly re-skin the app.
-- **Adding Charts**: New charts can be added trivially using the `ChartWrapper` component by passing a simple `lines` configuration object.

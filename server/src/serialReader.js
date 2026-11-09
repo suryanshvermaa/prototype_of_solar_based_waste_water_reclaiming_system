@@ -127,8 +127,19 @@ function startSerialLineReader({
     cleanupPort();
   }
 
+  // Send one command line to the Arduino (e.g. "T35.0", "R", "S")
+  function write(line) {
+    return new Promise((resolve, reject) => {
+      if (!port?.isOpen) return reject(new Error('Serial port is not open'));
+      port.write(`${line}\n`, (err) => {
+        if (err) return reject(err);
+        port.drain((e) => (e ? reject(e) : resolve()));
+      });
+    });
+  }
+
   connect();
-  return { stop };
+  return { stop, write };
 }
 
 module.exports = {

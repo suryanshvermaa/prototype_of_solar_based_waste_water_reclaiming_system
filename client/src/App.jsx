@@ -1,72 +1,83 @@
-import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
-
-import Sidebar from './components/layout/Sidebar';
-import Topbar from './components/layout/Topbar';
-import DashboardPage from './pages/DashboardPage';
-import DevicesPage from './pages/DevicesPage';
-import AnalyticsPage from './pages/AnalyticsPage';
-import AlertsPage from './pages/AlertsPage';
+import { useEffect, useMemo, useState } from 'react';
+import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { NAV, Sidebar, Topbar } from './components/Shell';
+import { useTelemetry } from './hooks/useTelemetry';
+import OverviewPage from './pages/OverviewPage';
+import LoopsPage from './pages/LoopsPage';
+import PerformancePage from './pages/PerformancePage';
+import EventsPage from './pages/EventsPage';
+import DataPage from './pages/DataPage';
 import SettingsPage from './pages/SettingsPage';
-import { useSensorData } from './hooks/useSensorData';
+import { WINDOWS } from './utils/format';
 
-const PAGE_TITLES = {
-  '/':          'Dashboard',
-  '/devices':   'Devices',
-  '/analytics': 'Analytics',
-  '/alerts':    'Alerts',
-  '/settings':  'Settings',
-};
+
+function load(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : JSON.parse(v);
+  } catch {
+    return fallback;
+  }
+}
+function save(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
+}
 
 function AppShell() {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem('theme');
-    if (saved) return saved === 'dark';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  // ?theme=light|dark overrides the saved theme (useful for screenshots / printing)
+  const [isDark, setDark] = useState(() => {
+    const t = new URLSearchParams(window.location.search).get('theme');
+    return t === 'light' ? false : t === 'dark' ? true : load('theme-dark', true);
   });
-
-  // Apply .dark class to <html> — CSS variables handle the rest
-  useEffect(() => {
-    const root = document.documentElement;
-    if (isDark) {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-  }, [isDark]);
-
-  const handleToggleTheme = () => setIsDark((d) => !d);
-
+  const [windowSec, setWindowSec] = useState(() => load('window-sec', 300));
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [seenEvents, setSeenEvents] = useState(0);
   const location = useLocation();
-  const pageTitle = PAGE_TITLES[location.pathname] ?? 'Dashboard';
+  const t = useTelemetry();
 
-  const sensorState = useSensorData();
-  const { sensorData, overallConnected, socketConnected } = sensorState;
-  const modeLabel = sensorData?.mode === 'REAL' ? 'LIVE' : 'MOCK';
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDark);
+    save('theme-dark', isDark);
+  }, [isDark]);
+  useEffect(() => save('window-sec', windowSec), [windowSec]);
+
+  const recent = useMemo(() => {
+    if (!t.history.length) return [];
+    const end = t.history[t.history.length - 1].ts;
+    return t.history.filter((p) => p.ts >= end - windowSec * 1000);
+  }, [t.history, windowSec]);
+
+  const dangerCount = t.events.filter((e) => e.severity === 'danger').length;
+  useEffect(() => { if (location.pathname === '/events') setSeenEvents(dangerCount); }, [location.pathname, dangerCount]);
+
+  const title = NAV.find((n) => n.to === location.pathname)?.label ?? 'Overview';
+  const windowLabel = WINDOWS.find((w) => w.value === windowSec)?.label ?? `${windowSec} s`;
+  const common = { latest: t.latest, recent, isDark, source: t.source };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-theme-base text-text-primary">
-      <Sidebar
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((c) => !c)}
-      />
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+    <div className="flex h-screen overflow-hidden">
+      <Sidebar open={menuOpen} onClose={() => setMenuOpen(false)} unread={Math.max(0, dangerCount - seenEvents)} />
+      <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
-          title={pageTitle}
-          overallConnected={overallConnected}
-          modeLabel={modeLabel}
-          onToggleTheme={handleToggleTheme}
-          isDark={isDark}
+          title={title} latest={t.latest} linkUp={t.linkUp} source={t.source}
+          isDark={isDark} onToggleTheme={() => setDark((d) => !d)} onMenu={() => setMenuOpen(true)}
         />
-        <main className="flex-1 overflow-y-auto">
+        <main key={location.pathname} className="flex-1 overflow-y-auto animate-fade-up">
           <Routes>
-            <Route path="/"          element={<DashboardPage {...sensorState} isDark={isDark} />} />
-            <Route path="/devices"   element={<DevicesPage sensorData={sensorData} socketConnected={socketConnected} isLiveMode={sensorState.isLiveMode} overallConnected={sensorState.overallConnected} />} />
-            <Route path="/analytics" element={<AnalyticsPage history={sensorState.history} isDark={isDark} />} />
-            <Route path="/alerts"    element={<AlertsPage sensorData={sensorData} stabilityLabel={sensorState.stabilityLabel} stabilityTone={sensorState.stabilityTone} />} />
-            <Route path="/settings"  element={<SettingsPage isDark={isDark} onToggleTheme={handleToggleTheme} />} />
+            <Route path="/" element={<OverviewPage {...common} events={t.events} />} />
+            <Route path="/loops" element={<LoopsPage {...common} />} />
+            <Route path="/performance" element={<PerformancePage {...common} windowLabel={windowLabel} />} />
+            <Route path="/events" element={<EventsPage latest={t.latest} events={t.events} />} />
+            <Route path="/data" element={<DataPage recent={recent} />} />
+            <Route
+              path="/settings"
+              element={
+                <SettingsPage
+                  isDark={isDark} setDark={setDark} windowSec={windowSec} setWindowSec={setWindowSec}
+                  latest={t.latest} source={t.source} socketConnected={t.socketConnected}
+                />
+              }
+            />
           </Routes>
         </main>
       </div>

@@ -1,24 +1,24 @@
 import { API_URL } from './config';
 
-/**
- * Fetch the latest sensor data snapshot from the REST endpoint.
- * Used as initial hydration and as a fallback when WebSocket is stale.
- */
-export async function fetchLatestData() {
-  const res = await fetch(`${API_URL}/data`);
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
+async function getJson(path) {
+  const res = await fetch(`${API_URL}${path}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
-/**
- * Future: fetch historical data for a given time range.
- * Uncomment and wire up once the server exposes the endpoint.
- */
-// export async function fetchHistory({ from, to, limit = 500 } = {}) {
-//   const params = new URLSearchParams({ from, to, limit });
-//   const res = await fetch(`${API_URL}/history?${params}`);
-//   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-//   return res.json();
-// }
+export const fetchLatestData = () => getJson('/data');
+export const fetchHistory = () => getJson('/history');
+export const fetchEvents = () => getJson('/events');
+export const csvLogUrl = () => `${API_URL}/logs/current`;
+
+/** cmd: 'setpoint' (value in degC) | 'reset' | 'stop' | 'sim:cloud' | 'sim:clog' | 'sim:inlet' | 'sim:sensor' */
+export async function sendCommand(cmd, value) {
+  const res = await fetch(`${API_URL}/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd, value }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+}
